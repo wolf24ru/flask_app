@@ -15,6 +15,13 @@ class User(db.Model):
     def verify_password(self, password):
         return pwd_context.verify(password, self.password_hash)
 
+    def to_dict(self):
+        return {
+            'user_id': self.id,
+            'user_name': self.username,
+            'advertisements': self.advertisements
+        }
+
 
 class Advertisement(db.Model):
     __tablename__ = 'advertisements'
@@ -23,3 +30,12 @@ class Advertisement(db.Model):
     description = db.Column(db.String(200))
     create_date = db.Column(db.DateTime(), nullable=False)
     owner = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'title': self.title,
+            'description': self.description,
+            'create_date': self.create_date,
+            'owner': self.owner
+        }
