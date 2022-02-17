@@ -1,4 +1,3 @@
-from os import abort
 from datetime import datetime
 import jsonschema
 from flask import jsonify, g, request
@@ -8,6 +7,7 @@ from passlib.apps import custom_app_context as pwd_context
 
 from models import User, Advertisement
 from new_app import db, app
+from error import msg_response
 from schema import NEW_USER, NEW_THING
 
 
@@ -35,19 +35,12 @@ class UserView(MethodView):
         return True
 
     def get(self, user_id):
-        # TODO проверка на число
         if user_id is None:
-            response = jsonify(msg='id is none')
-            response.status_code = 400
-            return response
-        if User.query.filter_by(id=user_id).first() is None:
-            response = jsonify(msg=f'user {user_id} not exist')
-            response.status_code = 400
-            return response
+            return msg_response(msg='id is none')
         user = User.query.filter_by(id=user_id).first()
-        response = jsonify(user=user.username, user_id=user.id)
-        response.status_code = 200
-        return response
+        if user is None:
+            return msg_response(msg=f'user {user_id} not exist')
+        return jsonify(user.to_dict())
 
     def post(self,):
         try:
@@ -56,26 +49,19 @@ class UserView(MethodView):
             password = request.json['password']
             self.hash_password(password)
             if user_name is None or password is None:
-                response = jsonify(msg='user name or password is none')
-                response.status_code = 400
-                return response
-            if User.query.filter_by(username=user_name).first() is not None:
-                response = jsonify(msg='user exist')
-                response.status_code = 400
-                return response
+                return msg_response(msg='user name or password is none')
+            user = User.query.filter_by(username=user_name).first()
+            if user is not None:
+                return msg_response(msg='user exist')
             user = User(username=user_name)
             user.hash_password(password)
             db.session.add(user)
             db.session.commit()
-            user_response = User.query.filter_by(username=user_name).first()
-            response = jsonify(user_response.to_dict())
-            # response = jsonify(data='user create', user_id=user_response.id, user_name=user_response.username, )
+            response = jsonify(user.to_dict())
             response.status_code = 201
             return response
         except jsonschema.ValidationError as er:
-            response = jsonify(error=er.message)
-            response.status_code = 400
-            return response
+            return msg_response(error=er.message)
 
 
 class AdvertisementView(MethodView):
@@ -91,11 +77,13 @@ class AdvertisementView(MethodView):
     def get(self, **adv):
         if adv:
             adv_first = Advertisement.query.filter_by(id=adv['adv_id']).first()
-            response = jsonify(adv_first.to_dict())
+            if adv_first is not None:
+                response = jsonify(adv_first.to_dict())
+            else:
+                return msg_response(msg='user not exist')
         else:
             adv_all = Advertisement.query.all()
             response = jsonify(json_list=[adv_.to_dict() for adv_ in adv_all])
-        response.status_code = 200
         return response
 
     def post(self):
@@ -114,22 +102,15 @@ class AdvertisementView(MethodView):
                                     owner=user.id)
                 db.session.add(adv)
                 db.session.commit()
-                response = jsonify(data='Advertisement successful create',
-                                   title=title,
-                                   description=description,
-                                   create_date=date,
-                                   owner=user.username
-                                   )
-                response.status_code = 201
-                return response
+                return msg_response(201, data='Advertisement successful create',
+                                    title=title,
+                                    description=description,
+                                    create_date=date,
+                                    owner=user.username)
             else:
-                response = jsonify(error='User not verification')
-                response.status_code = 401
-                return response
+                return msg_response(401, error='User not verification')
         except jsonschema.ValidationError as er:
-            response = jsonify(error=er.message)
-            response.status_code = 400
-            return response
+            return msg_response(error=er.message)
 
     def __check_owner(self, user_name,  adv_id):
         user = User.query.filter_by(username=user_name).first().advertisements
@@ -149,23 +130,39 @@ class AdvertisementView(MethodView):
                     db.session.delete(adv)
                     db.session.commit()
                     response = jsonify(data=f'Advertisement {adv_id} delete')
-                    response.status_code = 200
                     return response
                 else:
                     response = jsonify(data=f'you not owner advertisement {adv_id}. Error delete')
                     response.status_code = 400
                     return response
             else:
-                response = jsonify(error='User not verification')
-                response.status_code = 401
-                return response
+                return msg_response(401, error='User not verification')
         except jsonschema.ValidationError as er:
-            response = jsonify(error=er.message)
-            response.status_code = 400
-            return response
+            return msg_response(error=er.message)
 
     def patch(self, adv_id):
-        return
+        try:
+            jsonschema.validate(request.json, NEW_USER)
+            json_request = request.json
+            user_name = json_request.pop('user_name')
+            password = json_request.pop('password')
+            if self.verify_password(user_name, password):
+                if self.__check_owner(user_name, adv_id):
+                    adv = Advertisement.query.filter_by(id=adv_id).first()
+                    for update_key, update_value in json_request.items():
+                        match update_key:
+                            case 'title':
+                                adv.title = update_value
+                            case 'description':
+                                adv.title = update_value
+                    db.session.commit()
+                    return msg_response(200, data=f'Advertisement {adv_id} update')
+                else:
+                    return msg_response(data=f'you not owner advertisement {adv_id}. Error delete')
+            else:
+                return msg_response(401, error='User not verification')
+        except jsonschema.ValidationError as er:
+            return msg_response(error=er.message)
 
 
 app.add_url_rule('/new_user/', view_func=UserView.as_view('new_user'), methods=['POST'])
